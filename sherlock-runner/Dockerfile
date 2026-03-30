@@ -5,7 +5,7 @@ FROM amazonlinux:2023 AS builder
 
 # Enable EPEL for netcdf/hdf5 packages
 RUN dnf install -y \
-    gcc gcc-c++ make cmake git curl tar gzip \
+    gcc gcc-c++ make cmake git tar gzip \
     zlib-devel \
     && dnf clean all
 
