@@ -24,7 +24,7 @@ RUN curl -fsSL -L https://github.com/HDFGroup/hdf5/releases/download/hdf5_1.14.5
 RUN curl -fsSL -L https://github.com/Unidata/netcdf-c/archive/refs/tags/v4.9.2.tar.gz | tar xz \
     && cd netcdf-c-4.9.2 \
     && CPPFLAGS="-I/usr/local/include" LDFLAGS="-L/usr/local/lib" \
-       ./configure --prefix=/usr/local --enable-shared --disable-dap --disable-byterange \
+       ./configure --prefix=/usr/local --enable-shared --disable-dap --disable-byterange --disable-libxml2 \
     && make -j$(nproc) \
     && make install \
     && cd .. && rm -rf netcdf-c-4.9.2
