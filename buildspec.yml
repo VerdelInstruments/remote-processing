@@ -1,0 +1,22 @@
+version: 0.2
+
+env:
+  variables:
+    ECR_REPO: 987686461587.dkr.ecr.eu-west-2.amazonaws.com/sherlock-runner
+
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to ECR...
+      - aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin 987686461587.dkr.ecr.eu-west-2.amazonaws.com
+  build:
+    commands:
+      - echo Building Docker image...
+      - cd sherlock-runner
+      - docker build --platform linux/arm64 -t sherlock-runner .
+      - docker tag sherlock-runner:latest $ECR_REPO:latest
+  post_build:
+    commands:
+      - echo Pushing to ECR...
+      - docker push $ECR_REPO:latest
+      - echo Build complete.
