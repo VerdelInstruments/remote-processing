@@ -1,0 +1,57 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Sherlock mass spectrometry pipeline — Rust Lambda on ARM64
+
+Globals:
+  Function:
+    Timeout: 900
+    MemorySize: 10240
+
+Parameters:
+  DataBucketName:
+    Type: String
+    Default: verdel-sherlock-data
+  ResultsBucketName:
+    Type: String
+    Default: verdel-sherlock-results
+
+Resources:
+  SherlockFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: rust-cargolambda
+    Properties:
+      CodeUri: sherlock-runner/
+      Handler: bootstrap
+      Runtime: provided.al2023
+      Architectures:
+        - arm64
+      Environment:
+        Variables:
+          RUST_LOG: info
+          RESULTS_BUCKET: !Ref ResultsBucket
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref DataBucketName
+        - S3CrudPolicy:
+            BucketName: !Ref ResultsBucketName
+      FunctionUrlConfig:
+        AuthType: AWS_IAM
+
+  ResultsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref ResultsBucketName
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldRuns
+            Status: Enabled
+            ExpirationInDays: 90
+
+Outputs:
+  SherlockFunctionArn:
+    Value: !GetAtt SherlockFunction.Arn
+  SherlockFunctionUrl:
+    Value: !GetAtt SherlockFunctionUrl.FunctionUrl
+  ResultsBucketName:
+    Value: !Ref ResultsBucket

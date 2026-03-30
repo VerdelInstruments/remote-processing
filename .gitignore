@@ -1,0 +1,5 @@
+target/
+.aws-sam/
+samconfig.toml
+*.nc
+/tmp/
