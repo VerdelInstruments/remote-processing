@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Sherlock mass spectrometry pipeline — Rust Lambda on ARM64
+Description: Sherlock mass spectrometry pipeline — Rust Lambda (container image, ARM64)
 
 Globals:
   Function:
@@ -18,12 +18,8 @@ Parameters:
 Resources:
   SherlockFunction:
     Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: rust-cargolambda
     Properties:
-      CodeUri: sherlock-runner/
-      Handler: bootstrap
-      Runtime: provided.al2023
+      PackageType: Image
       Architectures:
         - arm64
       Environment:
@@ -35,8 +31,10 @@ Resources:
             BucketName: !Ref DataBucketName
         - S3CrudPolicy:
             BucketName: !Ref ResultsBucketName
-      FunctionUrlConfig:
-        AuthType: AWS_IAM
+    Metadata:
+      DockerTag: sherlock-runner
+      DockerContext: sherlock-runner
+      Dockerfile: Dockerfile
 
   ResultsBucket:
     Type: AWS::S3::Bucket
@@ -51,7 +49,5 @@ Resources:
 Outputs:
   SherlockFunctionArn:
     Value: !GetAtt SherlockFunction.Arn
-  SherlockFunctionUrl:
-    Value: !GetAtt SherlockFunctionUrl.FunctionUrl
   ResultsBucketName:
     Value: !Ref ResultsBucket

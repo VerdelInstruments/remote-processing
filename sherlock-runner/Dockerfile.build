@@ -1,0 +1,33 @@
+# Build the Sherlock Lambda binary inside an AL2023 ARM64 container
+# with netcdf + hdf5 system libraries available.
+FROM public.ecr.aws/lambda/provided:al2023-arm64 AS builder
+
+# Install build tools and NetCDF/HDF5 development libraries
+RUN dnf install -y gcc gcc-c++ make cmake git \
+    netcdf-devel hdf5-devel zlib-devel \
+    && dnf clean all
+
+# Install Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY src/ src/
+
+# Build release binary
+RUN cargo build --release
+
+# The binary is at /build/target/release/bootstrap
+FROM public.ecr.aws/lambda/provided:al2023-arm64
+
+# Copy the built binary
+COPY --from=builder /build/target/release/bootstrap /var/runtime/bootstrap
+
+# Copy required shared libraries
+COPY --from=builder /usr/lib64/libnetcdf.so* /usr/lib64/
+COPY --from=builder /usr/lib64/libhdf5.so* /usr/lib64/
+COPY --from=builder /usr/lib64/libhdf5_hl.so* /usr/lib64/
+COPY --from=builder /usr/lib64/libsz.so* /usr/lib64/
+
+CMD ["bootstrap"]
