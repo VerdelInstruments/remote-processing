@@ -42,6 +42,8 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY src/ src/
 
+ENV HDF5_DIR=/usr/local
+ENV NETCDF_DIR=/usr/local
 RUN cargo build --release
 
 # --- Runtime image ---
