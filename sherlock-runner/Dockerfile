@@ -13,7 +13,7 @@ RUN dnf install -y \
 WORKDIR /deps
 
 # HDF5 1.14
-RUN curl -fsSL https://github.com/HDFGroup/hdf5/releases/download/hdf5_1.14.5/hdf5-1.14.5.tar.gz | tar xz \
+RUN curl -fsSL -L https://github.com/HDFGroup/hdf5/releases/download/hdf5_1.14.5/hdf5-1.14.5.tar.gz | tar xz \
     && cd hdf5-1.14.5 \
     && ./configure --prefix=/usr/local --enable-shared --disable-tests --disable-tools \
     && make -j$(nproc) \
@@ -21,7 +21,7 @@ RUN curl -fsSL https://github.com/HDFGroup/hdf5/releases/download/hdf5_1.14.5/hd
     && cd .. && rm -rf hdf5-1.14.5
 
 # NetCDF-C 4.9
-RUN curl -fsSL https://github.com/Unidata/netcdf-c/releases/download/v4.9.2/netcdf-c-4.9.2.tar.gz | tar xz \
+RUN curl -fsSL -L https://github.com/Unidata/netcdf-c/archive/refs/tags/v4.9.2.tar.gz | tar xz \
     && cd netcdf-c-4.9.2 \
     && CPPFLAGS="-I/usr/local/include" LDFLAGS="-L/usr/local/lib" \
        ./configure --prefix=/usr/local --enable-shared --disable-dap --disable-byterange \
