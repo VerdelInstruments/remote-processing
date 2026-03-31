@@ -13,13 +13,13 @@ RUN dnf install -y \
 # Build HDF5 and NetCDF from source (not in AL2023 repos)
 WORKDIR /deps
 
-# HDF5 1.14
-RUN curl -fsSL -L https://github.com/HDFGroup/hdf5/releases/download/hdf5_1.14.5/hdf5-1.14.5.tar.gz | tar xz \
-    && cd hdf5-1.14.5 \
+# HDF5 1.12.3 (hdf5-sys 0.8.1 doesn't support 1.14+)
+RUN curl -fsSL -L https://github.com/HDFGroup/hdf5/releases/download/hdf5-1_12_3/hdf5-1_12_3.tar.gz | tar xz \
+    && cd hdfsrc \
     && ./configure --prefix=/usr/local --enable-shared --disable-tests --disable-tools \
     && make -j$(nproc) \
     && make install \
-    && cd .. && rm -rf hdf5-1.14.5
+    && cd .. && rm -rf hdfsrc
 
 # NetCDF-C 4.9
 RUN curl -fsSL -L https://github.com/Unidata/netcdf-c/archive/refs/tags/v4.9.2.tar.gz | tar xz \
