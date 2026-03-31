@@ -176,6 +176,15 @@ pub fn top_n_peaks(
     let swim_coords = ds.swim_coords.as_ref().ok_or("No swim coordinates")?;
     let tof_coords = ds.tof_coords.as_ref().ok_or("No tof coordinates")?;
 
+    // Stash the full peak set before top_n filters it down to 1,200.
+    // peaks_above_noise needs the original ~14M peaks (matching production).
+    if sh.full_peak_row_idx.is_none() {
+        sh.full_peak_row_idx = Some(peak_rows.clone());
+        sh.full_peak_col_idx = Some(peak_cols.clone());
+        sh.full_peak_amplitudes = Some(amplitudes.clone());
+        info!("[top_n_peaks] stashed {} full peaks for peaks_above_noise", peak_rows.len());
+    }
+
     let total_peaks = peak_rows.len();
     let (n_rows, n_cols) = ds.shape;
 

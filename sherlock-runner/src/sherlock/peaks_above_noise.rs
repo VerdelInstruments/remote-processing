@@ -25,6 +25,7 @@
 //! the filtered subset, so downstream steps (precursors, fragments, export)
 //! operate only on peaks that survived the noise threshold.
 
+use log::info;
 use serde::Serialize;
 
 use crate::dataset::DatasetState;
@@ -78,15 +79,22 @@ pub fn peaks_above_noise(
     let swim_coords = ds.swim_coords.as_ref().ok_or("No swim coordinates")?;
     let tof_coords = ds.tof_coords.as_ref().ok_or("No tof coordinates")?;
 
-    // Read input peaks from SherlockState (set by find_filter)
-    let peak_rows = sh.peak_row_idx.as_ref()
+    // Use the FULL peak set (stashed before top_n) if available.
+    // Production peaks_above_noise operates on the full ~14M peaks, not
+    // the 1,200 top_n selection. The stash is set by top_n_peaks.
+    let peak_rows = sh.full_peak_row_idx.as_ref()
+        .or(sh.peak_row_idx.as_ref())
         .ok_or("No peaks available -- run find_filter or get_peaks_raw first")?;
-    let peak_cols = sh.peak_col_idx.as_ref()
-        .ok_or("No peak columns available -- run find_filter or get_peaks_raw first")?;
-    let peak_amps = sh.peak_amplitudes.as_ref()
-        .ok_or("No peak amplitudes available -- run find_filter or get_peaks_raw first")?;
+    let peak_cols = sh.full_peak_col_idx.as_ref()
+        .or(sh.peak_col_idx.as_ref())
+        .ok_or("No peak columns available")?;
+    let peak_amps = sh.full_peak_amplitudes.as_ref()
+        .or(sh.peak_amplitudes.as_ref())
+        .ok_or("No peak amplitudes available")?;
 
     let input_peak_count = peak_rows.len();
+    info!("[peaks_above_noise] using {} input peaks (full={})",
+        input_peak_count, sh.full_peak_row_idx.is_some());
     let min_snr_f32 = min_snr as f32;
 
     // Step 1: Compute noise floor using column-wise rolling median with reflect mode.
@@ -156,6 +164,10 @@ pub fn peaks_above_noise(
     // DO NOT touch centroids — they belong to the pre-noise-filter peak set
     // and are used by compare/export for coordinate matching. The review step
     // handles missing/mismatched centroids gracefully.
+    // Free the full peak stash — no longer needed
+    sh.full_peak_row_idx = None;
+    sh.full_peak_col_idx = None;
+    sh.full_peak_amplitudes = None;
     // Clear per-peak downstream state that depends on old indices
     sh.swim_groups = None;
     sh.charges = None;

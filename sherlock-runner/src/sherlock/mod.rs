@@ -75,6 +75,12 @@ pub struct SherlockState {
     pub charges: Option<Vec<i32>>,
     pub isotope_groups: Option<Vec<Vec<usize>>>,
 
+    // Full peak set (saved before top_n overwrites peak arrays).
+    // peaks_above_noise needs the original 14M peaks, not the 1,200 top_n.
+    pub full_peak_row_idx: Option<Vec<usize>>,
+    pub full_peak_col_idx: Option<Vec<usize>>,
+    pub full_peak_amplitudes: Option<Vec<f64>>,
+
     // Step 6: Top N peaks (tallest peak selection)
     pub top_n_mask: Option<Vec<bool>>,
 
