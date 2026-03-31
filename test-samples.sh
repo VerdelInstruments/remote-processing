@@ -48,11 +48,12 @@ for PKG_PATH in $PACKAGES; do
   echo "    NC: s3://$BUCKET/$NC_PATH"
   echo "    Ref: s3://$BUCKET/$PKG_PATH/sherlock/peaks.db"
 
-  # Invoke Lambda
+  # Invoke Lambda (up to 15 min timeout for large files)
   RESPONSE_FILE="$OUTPUT_DIR/$RUN_ID-response.json"
   aws lambda invoke \
     --function-name sherlock-runner \
     --cli-binary-format raw-in-base64-out \
+    --cli-read-timeout 900 \
     --payload "{
       \"s3_input_path\": \"s3://$BUCKET/$NC_PATH\",
       \"s3_output_prefix\": \"s3://$RESULTS_BUCKET/test-batch/$RUN_ID\",
