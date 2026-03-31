@@ -275,29 +275,39 @@ fn sliding_max_1d_f32(input: &[f32], output: &mut [f32], kernel: usize) {
 fn maximum_filter_2d(data: &Array2<f32>, kernel: usize) -> Vec<f32> {
     let (n_rows, n_cols) = data.dim();
 
-    // Pass 1: row-wise max (contiguous reads, fast)
-    let mut intermediate = Array2::<f32>::zeros((n_rows, n_cols));
+    // Memory-optimised 2-pass separable maximum filter.
+    // Peak memory: data (3.2GB) + one column-major buffer (3.2GB) = 6.4GB.
+    // No second full buffer — pass 1 writes directly into column-major layout,
+    // pass 2 operates in-place on each column.
+
+    // Pass 1: row-wise sliding max → write directly into column-major buffer.
+    // Each row is computed into a temp row buffer, then scattered to column-major.
+    let mut result = vec![0.0f32; n_rows * n_cols];
     {
         let raw_in = data.as_slice().unwrap();
-        let raw_out = intermediate.as_slice_mut().unwrap();
-        raw_out
-            .par_chunks_mut(n_cols)
-            .enumerate()
-            .for_each(|(row, out_row)| {
-                let in_row = &raw_in[row * n_cols..(row + 1) * n_cols];
-                sliding_max_1d_f32(in_row, out_row, kernel);
-            });
+        // Process each row sequentially (scatter-write prevents parallel rows)
+        let mut row_buf = vec![0.0f32; n_cols];
+        for row in 0..n_rows {
+            let in_row = &raw_in[row * n_cols..(row + 1) * n_cols];
+            sliding_max_1d_f32(in_row, &mut row_buf, kernel);
+            // Scatter into column-major: result[col * n_rows + row]
+            for col in 0..n_cols {
+                result[col * n_rows + row] = row_buf[col];
+            }
+        }
     }
 
-    // Pass 2: column-wise max → column-major result
-    let mut result = vec![0.0f32; n_rows * n_cols];
-    result
-        .par_chunks_mut(n_rows)
-        .enumerate()
-        .for_each(|(col, out)| {
-            let input = extract_column(&intermediate, col);
-            sliding_max_1d_f32(&input, out, kernel);
-        });
+    // Pass 2: column-wise sliding max, in-place.
+    // Each column is now a contiguous n_rows slice in the column-major buffer.
+    let mut col_buf = vec![0.0f32; n_rows];
+    for col in 0..n_cols {
+        let start = col * n_rows;
+        let end = start + n_rows;
+        sliding_max_1d_f32(&result[start..end], &mut col_buf, kernel);
+        result[start..end].copy_from_slice(&col_buf);
+    }
+
+    // result[col * n_rows + row] = 2D maximum filter value at (row, col)
     result
 }
 
@@ -623,5 +633,127 @@ pub mod test_internals {
     /// Returns flat **column-major** Vec<f32> (index = col * n_rows + row).
     pub fn maximum_filter_2d_pub(data: &Array2<f32>, kernel: usize) -> Vec<f32> {
         super::maximum_filter_2d(data, kernel)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::Array2;
+
+    /// Reference (naive) 2D maximum filter for validation.
+    /// For each cell, returns the max value in the kernel x kernel neighbourhood.
+    fn maximum_filter_2d_naive(data: &Array2<f32>, kernel: usize) -> Vec<f32> {
+        let (n_rows, n_cols) = data.dim();
+        let half = kernel / 2;
+        let mut result = vec![0.0f32; n_rows * n_cols];
+        for row in 0..n_rows {
+            for col in 0..n_cols {
+                let mut max_val = f32::NEG_INFINITY;
+                let r_lo = row.saturating_sub(half);
+                let r_hi = (row + half + 1).min(n_rows);
+                let c_lo = col.saturating_sub(half);
+                let c_hi = (col + half + 1).min(n_cols);
+                for r in r_lo..r_hi {
+                    for c in c_lo..c_hi {
+                        let v = data[[r, c]];
+                        if v > max_val { max_val = v; }
+                    }
+                }
+                // Store column-major to match the optimised version
+                result[col * n_rows + row] = max_val;
+            }
+        }
+        result
+    }
+
+    #[test]
+    fn test_max_filter_small() {
+        // 5x6 matrix with known values
+        let data = Array2::from_shape_vec((5, 6), vec![
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0,
+            7.0, 8.0, 9.0, 0.0, 1.0, 2.0,
+            3.0, 4.0, 5.0, 6.0, 7.0, 8.0,
+            9.0, 0.0, 1.0, 2.0, 3.0, 4.0,
+            5.0, 6.0, 7.0, 8.0, 9.0, 0.0,
+        ]).unwrap();
+
+        let optimised = maximum_filter_2d(&data, 3);
+        let naive = maximum_filter_2d_naive(&data, 3);
+
+        assert_eq!(optimised.len(), naive.len());
+        for i in 0..optimised.len() {
+            assert_eq!(optimised[i], naive[i],
+                "Mismatch at index {} (optimised={}, naive={})", i, optimised[i], naive[i]);
+        }
+    }
+
+    #[test]
+    fn test_max_filter_single_peak() {
+        // 7x7 matrix with a single peak at centre
+        let mut data = Array2::zeros((7, 7));
+        data[[3, 3]] = 100.0;
+        data[[0, 0]] = 1.0;
+        data[[6, 6]] = 2.0;
+
+        let result = maximum_filter_2d(&data, 5);
+        let naive = maximum_filter_2d_naive(&data, 5);
+
+        for i in 0..result.len() {
+            assert_eq!(result[i], naive[i],
+                "Mismatch at index {}", i);
+        }
+
+        // The centre peak should propagate within the kernel radius
+        // result[col=3 * 7 + row=3] should be 100.0
+        assert_eq!(result[3 * 7 + 3], 100.0);
+    }
+
+    #[test]
+    fn test_max_filter_uniform() {
+        // All-same values — output should equal input
+        let data = Array2::from_elem((10, 10), 42.0f32);
+        let result = maximum_filter_2d(&data, 3);
+        for &v in &result {
+            assert_eq!(v, 42.0);
+        }
+    }
+
+    #[test]
+    fn test_max_filter_kernel_1() {
+        // Kernel size 1 = identity
+        let data = Array2::from_shape_vec((3, 4), vec![
+            1.0, 2.0, 3.0, 4.0,
+            5.0, 6.0, 7.0, 8.0,
+            9.0, 10.0, 11.0, 12.0,
+        ]).unwrap();
+
+        let result = maximum_filter_2d(&data, 1);
+        let (n_rows, n_cols) = data.dim();
+        for row in 0..n_rows {
+            for col in 0..n_cols {
+                assert_eq!(result[col * n_rows + row], data[[row, col]],
+                    "Mismatch at ({}, {})", row, col);
+            }
+        }
+    }
+
+    #[test]
+    fn test_max_filter_larger() {
+        // 20x30 random-ish data — validate against naive
+        let mut vals = Vec::with_capacity(600);
+        for i in 0..600 {
+            vals.push((i as f32 * 7.3 + 0.5).sin() * 100.0);
+        }
+        let data = Array2::from_shape_vec((20, 30), vals).unwrap();
+
+        for kernel in [3, 5, 7] {
+            let optimised = maximum_filter_2d(&data, kernel);
+            let naive = maximum_filter_2d_naive(&data, kernel);
+            for i in 0..optimised.len() {
+                assert!((optimised[i] - naive[i]).abs() < 1e-6,
+                    "kernel={} index={}: opt={} naive={}", kernel, i, optimised[i], naive[i]);
+            }
+        }
     }
 }
