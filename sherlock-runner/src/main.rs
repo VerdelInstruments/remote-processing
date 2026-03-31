@@ -138,6 +138,8 @@ fn parse_s3_uri(uri: &str) -> Result<(String, String), String> {
 }
 
 async fn download_from_s3(client: &S3Client, s3_uri: &str, local_path: &str) -> Result<(), String> {
+    use tokio::io::AsyncWriteExt;
+
     let (bucket, key) = parse_s3_uri(s3_uri)?;
     info!("[s3] downloading s3://{}/{} → {}", bucket, key, local_path);
     let t0 = Instant::now();
@@ -150,17 +152,28 @@ async fn download_from_s3(client: &S3Client, s3_uri: &str, local_path: &str) -> 
         .await
         .map_err(|e| format!("S3 download error: {}", e))?;
 
-    let bytes = resp
-        .body
-        .collect()
+    let content_length = resp.content_length().unwrap_or(0);
+
+    // Stream to disk — never hold the full file in RAM
+    let mut file = tokio::fs::File::create(local_path)
         .await
-        .map_err(|e| format!("S3 body read error: {}", e))?
-        .into_bytes();
+        .map_err(|e| format!("Failed to create {}: {}", local_path, e))?;
 
-    std::fs::write(local_path, &bytes)
-        .map_err(|e| format!("Failed to write {}: {}", local_path, e))?;
+    let mut stream = resp.body;
+    let mut written: u64 = 0;
+    while let Some(chunk) = stream
+        .try_next()
+        .await
+        .map_err(|e| format!("S3 stream error: {}", e))?
+    {
+        file.write_all(&chunk)
+            .await
+            .map_err(|e| format!("Write error: {}", e))?;
+        written += chunk.len() as u64;
+    }
+    file.flush().await.map_err(|e| format!("Flush error: {}", e))?;
 
-    info!("[s3] downloaded {:.0} MB in {}ms", bytes.len() as f64 / 1e6, t0.elapsed().as_millis());
+    info!("[s3] streamed {:.0} MB to disk in {}ms", written as f64 / 1e6, t0.elapsed().as_millis());
     Ok(())
 }
 
@@ -279,10 +292,12 @@ async fn handler(event: LambdaEvent<SherlockRequest>) -> Result<SherlockResponse
     let local_nc = "/tmp/input.nc";
     download_from_s3(&s3, &req.s3_input_path, local_nc).await?;
 
-    // Load dataset
+    // Load dataset into memory, then delete the /tmp file to free disk
+    // (NetCDF reads all data into Array2<f32>, no mmap)
     let mut ds = DatasetState::default();
     dataset::scan_directory(&mut ds, local_nc)?;
     dataset::load_nc(&mut ds)?;
+    let _ = std::fs::remove_file(local_nc);
 
     info!("[handler] dataset loaded: {:?}", ds.shape);
 
@@ -310,9 +325,6 @@ async fn handler(event: LambdaEvent<SherlockRequest>) -> Result<SherlockResponse
     let prefix = req.s3_output_prefix.trim_end_matches('/');
     upload_to_s3(&s3, &format!("{}/manifest.json", prefix), manifest_json.as_bytes()).await?;
     upload_to_s3(&s3, &format!("{}/peaks.json", prefix), peaks_json.as_bytes()).await?;
-
-    // Clean up /tmp
-    let _ = std::fs::remove_file(local_nc);
 
     let duration_ms = t0.elapsed().as_millis() as u64;
     info!("[handler] complete: {} peaks, {}ms", peak_count, duration_ms);
