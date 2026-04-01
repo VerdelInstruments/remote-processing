@@ -3,7 +3,6 @@
 
 FROM amazonlinux:2023 AS builder
 
-# Enable EPEL for netcdf/hdf5 packages
 RUN dnf install -y \
     gcc gcc-c++ make cmake git tar gzip \
     m4 autoconf automake libtool \
@@ -54,6 +53,13 @@ COPY --from=builder /usr/local/lib/libnetcdf.so* /usr/local/lib/
 COPY --from=builder /usr/local/lib/libhdf5.so* /usr/local/lib/
 COPY --from=builder /usr/local/lib/libhdf5_hl.so* /usr/local/lib/
 ENV LD_LIBRARY_PATH=/usr/local/lib
+
+# Python 3 + sklearn for the RANSAC bridge (optional algorithm variant)
+RUN dnf install -y python3 python3-pip && dnf clean all \
+    && pip3 install --no-cache-dir numpy scikit-learn
+
+# Copy RANSAC bridge script
+COPY ransac_bridge.py /opt/ransac_bridge.py
 
 # Copy binary
 COPY --from=builder /build/target/release/bootstrap ${LAMBDA_RUNTIME_DIR}/bootstrap

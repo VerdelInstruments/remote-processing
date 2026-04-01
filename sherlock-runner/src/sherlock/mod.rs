@@ -51,6 +51,10 @@ pub struct SherlockState {
     // Per-step intermediate capture for result set serialisation (task 2.1)
     pub step_intermediates: Vec<run::StepIntermediate>,
 
+    // Algorithm variant: controls RANSAC implementation choice
+    // "rust-native" = pure Rust RANSAC, "rust-sklearn-bridge" = Python sklearn via subprocess
+    pub use_sklearn_ransac: bool,
+
     // Step 1: Calibrate
     pub calibration: Option<CalibrationParams>,
 

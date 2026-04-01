@@ -80,6 +80,25 @@ def compare_peaks(ref_peaks: list[dict], our_peaks: list[dict], tolerance: float
     f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
     mean_dist = sum(distances) / len(distances) if distances else 0
 
+    # Tiered recall: sort reference peaks by amplitude, compute recall per tier
+    tiers = [50, 100, 200, 500, 0]  # 0 = all
+    tiered = []
+    amp_order = sorted(range(n_ref), key=lambda i: ref_peaks[i]["amplitude"], reverse=True)
+    for tier in tiers:
+        subset = amp_order[:tier] if tier > 0 else amp_order
+        hits = sum(1 for i in subset if matched_ref[i])
+        count = len(subset)
+        tier_recall = hits / count if count > 0 else 0
+        min_amp = ref_peaks[subset[-1]]["amplitude"] if count > 0 else 0
+        tiered.append({
+            "tier": tier if tier > 0 else n_ref,
+            "label": f"Top {tier}" if tier > 0 else "All",
+            "count": count,
+            "matched": hits,
+            "recall": round(tier_recall * 100, 1),
+            "min_amplitude": round(min_amp, 1),
+        })
+
     return {
         "ref_count": n_ref,
         "our_count": n_our,
@@ -90,6 +109,7 @@ def compare_peaks(ref_peaks: list[dict], our_peaks: list[dict], tolerance: float
         "recall": round(recall * 100, 1),
         "f1": round(f1 * 100, 1),
         "mean_dist": round(mean_dist, 4),
+        "tiered_recall": tiered,
     }
 
 
@@ -99,8 +119,8 @@ def main():
     # Find all test runs
     response_files = sorted(RESULTS_DIR.glob("test-*-response.json"))
 
-    print(f"{'Sample':<50} {'Ref':>5} {'Ours':>5} {'Match':>5} {'P%':>6} {'R%':>6} {'F1%':>6} {'Time':>7} {'Status':<10}")
-    print("=" * 140)
+    print(f"{'Sample':<35} {'Ref':>5} {'Ours':>5} {'Match':>5} {'P%':>6} {'R%':>6} {'F1%':>6} {'Top50':>6} {'Top100':>7} {'Top200':>7} {'Top500':>7} {'Time':>7} {'Variant':<20}")
+    print("=" * 160)
 
     for resp_file in response_files:
         run_id = resp_file.stem.replace("-response", "")
@@ -112,13 +132,14 @@ def main():
         # Check for error
         if "errorMessage" in resp:
             sample = run_id
-            print(f"{sample:<50} {'':>5} {'':>5} {'':>5} {'':>6} {'':>6} {'':>6} {'':>7} {'FAILED':<10}")
+            print(f"{sample:<35} {'':>5} {'':>5} {'':>5} {'':>6} {'':>6} {'':>6} {'':>6} {'':>7} {'':>7} {'':>7} {'':>7} {'FAILED':<20}")
             results.append({"run_id": run_id, "status": "FAILED", "error": resp["errorMessage"]})
             continue
 
         duration_ms = resp.get("duration_ms", 0)
         peak_count = resp.get("peak_count", 0)
         status = resp.get("status", "unknown")
+        variant = resp.get("algorithm_variant", "unknown")
 
         # Load reference peaks
         ref_db = RESULTS_DIR / f"{run_id}-ref-peaks.db"
@@ -126,7 +147,7 @@ def main():
 
         if not ref_db.exists() or not our_json.exists():
             sample = run_id
-            print(f"{sample:<50} {'':>5} {peak_count:>5} {'':>5} {'':>6} {'':>6} {'':>6} {duration_ms:>6}ms {'NO REF':<10}")
+            print(f"{sample:<35} {'':>5} {peak_count:>5} {'':>5} {'':>6} {'':>6} {'':>6} {'':>6} {'':>7} {'':>7} {'':>7} {duration_ms:>6}ms {variant:<20}")
             results.append({"run_id": run_id, "status": "NO_REF", "peak_count": peak_count})
             continue
 
@@ -135,17 +156,29 @@ def main():
 
         comparison = compare_peaks(ref_peaks, our_peaks, TOLERANCE)
 
+        # Extract tiered recall values
+        tiered = comparison.get("tiered_recall", [])
+        tier_map = {t["tier"]: t["recall"] for t in tiered}
+        t50 = tier_map.get(50, 0)
+        t100 = tier_map.get(100, 0)
+        t200 = tier_map.get(200, 0)
+        t500 = tier_map.get(500, 0)
+
         sample = run_id
         print(
-            f"{sample:<50} "
+            f"{sample:<35} "
             f"{comparison['ref_count']:>5} "
             f"{comparison['our_count']:>5} "
             f"{comparison['matched']:>5} "
             f"{comparison['precision']:>5.1f}% "
             f"{comparison['recall']:>5.1f}% "
             f"{comparison['f1']:>5.1f}% "
+            f"{t50:>5.1f}% "
+            f"{t100:>6.1f}% "
+            f"{t200:>6.1f}% "
+            f"{t500:>6.1f}% "
             f"{duration_ms:>6}ms "
-            f"{status:<10}"
+            f"{variant:<20}"
         )
 
         results.append({

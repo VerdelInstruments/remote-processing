@@ -29,8 +29,11 @@ struct SherlockRequest {
     config: PipelineConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct PipelineConfig {
+    // Algorithm variant: "rust-native" or "rust-sklearn-bridge"
+    #[serde(default = "default_variant")]
+    algorithm_variant: String,
     // Calibration
     #[serde(default = "default_scale")]
     scale: f64,
@@ -86,6 +89,7 @@ struct PipelineConfig {
     autocorrelation_tolerance: f64,
 }
 
+fn default_variant() -> String { "rust-sklearn-bridge".to_string() }
 fn default_scale() -> f64 { 39.0 }
 fn default_offset() -> f64 { 0.01 }
 fn default_peak_filter_size() -> usize { 5 }
@@ -114,6 +118,7 @@ fn default_autocorrelation_tolerance() -> f64 { 3.0 }
 struct SherlockResponse {
     run_id: String,
     status: String,
+    algorithm_variant: String,
     peak_count: usize,
     duration_ms: u64,
     results_prefix: String,
@@ -303,6 +308,8 @@ async fn handler(event: LambdaEvent<SherlockRequest>) -> Result<SherlockResponse
 
     // Run pipeline
     let mut sh = SherlockState::default();
+    sh.use_sklearn_ransac = req.config.algorithm_variant == "rust-sklearn-bridge";
+    info!("[handler] algorithm_variant={}, use_sklearn={}", req.config.algorithm_variant, sh.use_sklearn_ransac);
     let timings = run_pipeline(&mut ds, &mut sh, &req.config)?;
 
     // Build result set
@@ -332,6 +339,7 @@ async fn handler(event: LambdaEvent<SherlockRequest>) -> Result<SherlockResponse
     Ok(SherlockResponse {
         run_id,
         status: "completed".to_string(),
+        algorithm_variant: req.config.algorithm_variant.clone(),
         peak_count,
         duration_ms,
         results_prefix: prefix.to_string(),

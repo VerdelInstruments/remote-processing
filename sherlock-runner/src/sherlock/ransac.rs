@@ -157,11 +157,12 @@ fn ransac_fit_sklearn(
     use std::process::{Command, Stdio};
     use std::io::Write as IoWrite;
 
-    // Find the bridge script relative to the crate root
+    // Find the bridge script — check Lambda path first, then local paths
     let bridge_paths = [
+        std::path::PathBuf::from("/opt/ransac_bridge.py"),
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("ransac_bridge.py"),
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/ransac_bridge.py"),
-        std::path::PathBuf::from("tests/ransac_bridge.py"),
-        std::path::PathBuf::from("src-tauri/tests/ransac_bridge.py"),
+        std::path::PathBuf::from("ransac_bridge.py"),
     ];
 
     let bridge = bridge_paths.iter().find(|p| p.exists());
@@ -210,15 +211,22 @@ fn ransac_fit_sklearn(
     }
 }
 
-/// Primary RANSAC entry point. Uses sklearn bridge for production parity.
+/// Primary RANSAC entry point.
+/// When `use_sklearn` is true, uses the Python sklearn bridge for production parity.
+/// When false, uses the native Rust implementation.
 fn ransac_fit(
     tof: &[f64],
     swim: &[f64],
     tolerance: f64,
-    _iterations: usize,
+    iterations: usize,
     seed: u64,
+    use_sklearn: bool,
 ) -> (f64, f64, usize) {
-    ransac_fit_sklearn(tof, swim, tolerance, seed)
+    if use_sklearn {
+        ransac_fit_sklearn(tof, swim, tolerance, seed)
+    } else {
+        ransac_fit_native(tof, swim, tolerance, iterations, seed)
+    }
 }
 
 /// Native Rust RANSAC fallback.
@@ -306,7 +314,7 @@ fn ransac_fit_native(
 ///   5. Remove stripes (fixed threshold of 10)
 ///   6. Remove peaks outside linear band: 0.8*tof-20 < swim < 1.2*tof+20
 ///   7. RANSAC fit on remaining peaks
-fn rough_binned_fit(ds: &DatasetState, tolerance: f64) -> Result<(f64, f64), String> {
+fn rough_binned_fit(ds: &DatasetState, tolerance: f64, use_sklearn: bool) -> Result<(f64, f64), String> {
     let data = ds
         .data
         .as_ref()
@@ -645,7 +653,7 @@ fn rough_binned_fit(ds: &DatasetState, tolerance: f64) -> Result<(f64, f64), Str
     // Original uses residual_threshold=10 for both rough and refined RANSAC
     let ransac_residual_threshold = 10.0;
     let (slope, intercept, inlier_count) =
-        ransac_fit(&filt_tof, &filt_swim, ransac_residual_threshold, 1000, 42);
+        ransac_fit(&filt_tof, &filt_swim, ransac_residual_threshold, 1000, 42, use_sklearn);
 
     eprintln!("[rough_binned_fit] RANSAC fit: slope={:.6} intercept={:.4} ({} inliers from {} peaks)",
         slope, intercept, inlier_count, filt_tof.len());
@@ -704,7 +712,8 @@ pub fn ransac(
     // This gives a reliable approximate autocorrelation line even on
     // datasets where centroid-based rough RANSAC fails (e.g. sample-006).
     // -----------------------------------------------------------------------
-    let (rough_slope, rough_intercept) = rough_binned_fit(ds, tolerance)?;
+    let use_sklearn = sh.use_sklearn_ransac;
+    let (rough_slope, rough_intercept) = rough_binned_fit(ds, tolerance, use_sklearn)?;
 
     info!(
         "[ransac] using rough fit: swim = {:.4} * tof + {:.4}",
@@ -763,7 +772,7 @@ pub fn ransac(
         info!("[ransac] too few near-line peaks ({}) — falling back to direct RANSAC on all {} centroids",
               sub_tof.len(), n);
 
-        let (slope, intercept, _) = ransac_fit(centroids_tof, centroids_swim, 10.0, 1000, 42);
+        let (slope, intercept, _) = ransac_fit(centroids_tof, centroids_swim, 10.0, 1000, 42, use_sklearn);
         info!("[ransac] direct fallback fit: swim = {:.6} * tof + {:.6}", slope, intercept);
 
         let full_inlier_mask: Vec<bool> = centroids_tof
@@ -798,7 +807,7 @@ pub fn ransac(
     }
 
     // RANSAC on the refined peak set (residual_threshold=10 matching original)
-    let (slope, intercept, _) = ransac_fit(&sub_tof, &sub_swim, 10.0, 1000, 42);
+    let (slope, intercept, _) = ransac_fit(&sub_tof, &sub_swim, 10.0, 1000, 42, use_sklearn);
 
     info!(
         "[ransac] refined fit: swim = {:.6} * tof + {:.6}",
@@ -901,6 +910,7 @@ pub fn precise_autocorrelation(
     sh.precise_intercept = None;
     sh.precise_inlier_mask = None;
 
+    let use_sklearn = sh.use_sklearn_ransac;
     let rough_slope = sh.ransac_slope.ok_or("No rough fit — run RANSAC first")?;
     let rough_intercept = sh.ransac_intercept.ok_or("No rough fit")?;
 
@@ -985,7 +995,7 @@ pub fn precise_autocorrelation(
         });
     }
 
-    let (slope, intercept, _) = ransac_fit(&fit_tof_vals, &fit_swim_vals, 10.0, 1000, 42);
+    let (slope, intercept, _) = ransac_fit(&fit_tof_vals, &fit_swim_vals, 10.0, 1000, 42, use_sklearn);
 
     info!(
         "[precise_autocorrelation] RANSAC fit: swim = {:.10} * tof + {:.10}",
@@ -1040,7 +1050,7 @@ pub mod test_internals {
         iterations: usize,
         seed: u64,
     ) -> (f64, f64, usize) {
-        super::ransac_fit(tof, swim, tolerance, iterations, seed)
+        super::ransac_fit(tof, swim, tolerance, iterations, seed, true)
     }
 
     /// Public wrapper for rough_binned_fit.

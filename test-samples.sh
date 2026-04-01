@@ -1,8 +1,10 @@
 #!/bin/bash
 # Run 10 non-DSTL samples through the Lambda and compare against reference peaks.
-# Usage: ./test-samples.sh
+# Usage: ./test-samples.sh [variant]
+#   variant: "rust-native" or "rust-sklearn-bridge" (default)
 set -euo pipefail
 
+VARIANT="${1:-rust-sklearn-bridge}"
 PROFILE="verdel"
 REGION="eu-west-2"
 BUCKET="two-two-one-b-files-987686461587"
@@ -22,6 +24,7 @@ PACKAGES=$(aws s3 ls "s3://$BUCKET/" --recursive --profile "$PROFILE" --region "
   | head -10)
 
 echo "Found $(echo "$PACKAGES" | wc -l | tr -d ' ') packages"
+echo "Algorithm variant: $VARIANT"
 echo ""
 
 # For each package, find the fourierdomain.nc and run
@@ -57,7 +60,7 @@ for PKG_PATH in $PACKAGES; do
     --payload "{
       \"s3_input_path\": \"s3://$BUCKET/$NC_PATH\",
       \"s3_output_prefix\": \"s3://$RESULTS_BUCKET/test-batch/$RUN_ID\",
-      \"config\": {}
+      \"config\": {\"algorithm_variant\": \"$VARIANT\"}
     }" \
     --profile "$PROFILE" --region "$REGION" \
     "$RESPONSE_FILE" > /dev/null 2>&1
