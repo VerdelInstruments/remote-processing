@@ -340,26 +340,16 @@ async fn handler(event: LambdaEvent<SherlockRequest>) -> Result<SherlockResponse
 }
 
 fn build_peak_list(
-    ds: &DatasetState,
+    _ds: &DatasetState,
     sh: &SherlockState,
 ) -> Result<sherlock::run::PeakList, String> {
-    let peak_amps = sh.peak_amplitudes.as_ref().ok_or("No amplitudes")?;
-    let peak_rows = sh.peak_row_idx.as_ref().ok_or("No peaks")?;
-    let peak_cols = sh.peak_col_idx.as_ref().ok_or("No peaks")?;
-    let tof_coords = ds.tof_coords.as_ref().ok_or("No tof coordinates")?;
-    let swim_coords = ds.swim_coords.as_ref().ok_or("No swim coordinates")?;
-
-    let surviving: Vec<usize> = if let Some(mask) = sh.top_n_mask.as_ref().or(sh.stripe_mask.as_ref()) {
-        (0..mask.len()).filter(|&i| mask[i]).collect()
-    } else {
-        (0..peak_amps.len()).collect()
-    };
-    let n = surviving.len();
-
-    let default_tof: Vec<f64> = surviving.iter().map(|&i| tof_coords[peak_cols[i]]).collect();
-    let default_swim: Vec<f64> = surviving.iter().map(|&i| swim_coords[peak_rows[i]]).collect();
-    let c_tof = sh.centroids_tof.as_ref().unwrap_or(&default_tof);
-    let c_swim = sh.centroids_swim.as_ref().unwrap_or(&default_swim);
+    // Use centroids as the authoritative peak set — these are the refined
+    // positions from the centroid step (matching what compare uses).
+    // peaks_above_noise may have replaced peak_amplitudes with a different
+    // set, but centroids are untouched.
+    let c_tof = sh.centroids_tof.as_ref().ok_or("No centroids — run centroid step first")?;
+    let c_swim = sh.centroids_swim.as_ref().ok_or("No centroids")?;
+    let n = c_tof.len();
 
     let default_charges = vec![0i32; n];
     let charges = sh.charges.as_ref().unwrap_or(&default_charges);
@@ -379,6 +369,10 @@ fn build_peak_list(
         .or_else(|| sh.ransac_slope.zip(sh.ransac_intercept))
         .map(|(s, i)| sherlock::run::RansacFit { slope: s, intercept: i });
 
+    // Amplitude: use peak_amplitudes if it matches centroid count, else 0
+    let peak_amps = sh.peak_amplitudes.as_ref();
+    let amps_aligned = peak_amps.map_or(false, |a| a.len() == n);
+
     let peaks: Vec<sherlock::run::Peak> = (0..n)
         .map(|i| {
             let raw_swim = c_swim[i];
@@ -389,7 +383,7 @@ fn build_peak_list(
             sherlock::run::Peak {
                 tof_mass: c_tof[i],
                 swim_mass,
-                amplitude: peak_amps[surviving[i]],
+                amplitude: if amps_aligned { peak_amps.unwrap()[i] } else { 0.0 },
                 charge: *charges.get(i).unwrap_or(&0),
                 inlier: *inliers.get(i).unwrap_or(&true),
             }
