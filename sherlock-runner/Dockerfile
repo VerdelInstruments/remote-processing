@@ -56,10 +56,11 @@ ENV LD_LIBRARY_PATH=/usr/local/lib
 
 # Python 3 + sklearn for the RANSAC bridge (optional algorithm variant)
 RUN dnf install -y python3 python3-pip && dnf clean all \
-    && pip3 install --no-cache-dir numpy scikit-learn
+    && pip3 install --no-cache-dir numpy scikit-learn scipy xarray netCDF4
 
-# Copy RANSAC bridge script
+# Copy Python bridge scripts
 COPY ransac_bridge.py /opt/ransac_bridge.py
+COPY binning_bridge.py /opt/binning_bridge.py
 
 # Copy binary
 COPY --from=builder /build/target/release/bootstrap ${LAMBDA_RUNTIME_DIR}/bootstrap

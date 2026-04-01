@@ -1056,6 +1056,54 @@ pub mod test_internals {
     /// Public wrapper for rough_binned_fit.
     /// Returns (slope, intercept) from the binned rough autocorrelation pipeline.
     pub fn rough_binned_fit_pub(ds: &DatasetState, tolerance: f64) -> Result<(f64, f64), String> {
-        super::rough_binned_fit(ds, tolerance)
+        super::rough_binned_fit(ds, tolerance, false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dataset::{self, DatasetState};
+    use std::path::Path;
+
+    #[test]
+    fn test_rough_binned_fit_synthetic() {
+        // This test requires /tmp/test_binning_synthetic.nc
+        // Created by: python3 test_binning.py
+        let nc_path = "/tmp/test_binning_synthetic.nc";
+        if !Path::new(nc_path).exists() {
+            eprintln!("SKIP: {} not found. Run python3 test_binning.py first.", nc_path);
+            return;
+        }
+
+        let mut ds = DatasetState::default();
+        dataset::scan_directory(&mut ds, nc_path).expect("scan failed");
+        dataset::load_nc(&mut ds).expect("load failed");
+
+        assert!(ds.loaded);
+        assert_eq!(ds.shape, (1025, 50000));
+
+        // Run rough_binned_fit (native RANSAC, no sklearn)
+        let result = rough_binned_fit(&ds, 10.0, false);
+        assert!(result.is_ok(), "rough_binned_fit failed: {:?}", result.err());
+
+        let (slope, intercept) = result.unwrap();
+
+        // The synthetic data has peaks on the autocorrelation line (swim ≈ tof)
+        // so the expected slope is ~1.0 and intercept near 0.
+        eprintln!("rough_binned_fit result: slope={:.6}, intercept={:.4}", slope, intercept);
+
+        // Production binning finds:
+        // - 1637 TOF bins in range, 122 SWIM rows in range
+        // - 22 local maxima, 22 after threshold
+        // - 22 unique tof_idx
+        //
+        // If Rust's binning differs, the slope/intercept will diverge.
+        // A slope near 1.0 (±0.1) means the binning found the autocorrelation line.
+        // A slope far from 1.0 means the binning produced different peaks.
+        assert!(slope > 0.85 && slope < 1.15,
+            "Slope {:.4} is too far from 1.0 — binning likely diverged", slope);
+        assert!(intercept.abs() < 50.0,
+            "Intercept {:.4} is too far from 0 — fit may be on wrong feature", intercept);
     }
 }
