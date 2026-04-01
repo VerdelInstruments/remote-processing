@@ -333,6 +333,58 @@ async fn handler(event: LambdaEvent<SherlockRequest>) -> Result<SherlockResponse
     upload_to_s3(&s3, &format!("{}/manifest.json", prefix), manifest_json.as_bytes()).await?;
     upload_to_s3(&s3, &format!("{}/peaks.json", prefix), peaks_json.as_bytes()).await?;
 
+    // Upload diagnostic dump if it exists (from rough_binned_fit)
+    if let Ok(diag) = std::fs::read("/tmp/rough_binned_fit_diagnostic.json") {
+        upload_to_s3(&s3, &format!("{}/diagnostic_rust_binning.json", prefix), &diag).await?;
+        info!("[handler] uploaded Rust binning diagnostic");
+    }
+
+    // Run Python binning bridge for comparison (if available)
+    {
+        use std::process::{Command, Stdio};
+        use std::io::Write as IoWrite;
+
+        // Re-download .nc briefly for Python bridge (was deleted after load)
+        let local_nc = "/tmp/input_diag.nc";
+        if let Err(e) = download_from_s3(&s3, &req.s3_input_path, local_nc).await {
+            info!("[handler] skipping Python binning diagnostic: {}", e);
+        } else {
+            let bridge_req = serde_json::json!({
+                "nc_path": local_nc,
+                "n_bins": 5000,
+                "swim_range": [400, 1000],
+                "tof_range": [400, 1000],
+            });
+
+            let py_result = Command::new("python3")
+                .arg("/opt/binning_bridge.py")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .and_then(|mut child| {
+                    if let Some(ref mut stdin) = child.stdin {
+                        let _ = stdin.write_all(bridge_req.to_string().as_bytes());
+                    }
+                    child.wait_with_output()
+                });
+
+            match py_result {
+                Ok(output) if output.status.success() => {
+                    upload_to_s3(&s3, &format!("{}/diagnostic_python_binning.json", prefix), &output.stdout).await?;
+                    info!("[handler] uploaded Python binning diagnostic");
+                }
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    info!("[handler] Python binning bridge failed: {}", stderr);
+                }
+                Err(e) => info!("[handler] Python binning bridge not available: {}", e),
+            }
+
+            let _ = std::fs::remove_file(local_nc);
+        }
+    }
+
     let duration_ms = t0.elapsed().as_millis() as u64;
     info!("[handler] complete: {} peaks, {}ms", peak_count, duration_ms);
 

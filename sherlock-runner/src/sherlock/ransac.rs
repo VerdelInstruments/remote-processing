@@ -662,6 +662,20 @@ fn rough_binned_fit(ds: &DatasetState, tolerance: f64, use_sklearn: bool) -> Res
         eprintln!("  peak[{}]: tof={:.4} swim={:.4}", i, filt_tof[i], filt_swim[i]);
     }
 
+    // Dump all RANSAC input peaks to /tmp for diagnostic comparison
+    if let Ok(diag) = serde_json::to_string_pretty(&serde_json::json!({
+        "peaks": filt_tof.iter().zip(filt_swim.iter()).zip(filt_tof_idx.iter()).zip(filt_swim_idx.iter())
+            .map(|(((&t, &s), &ti), &si)| serde_json::json!({"tof": t, "swim": s, "tof_idx": ti, "swim_idx": si}))
+            .collect::<Vec<_>>(),
+        "slope": slope,
+        "intercept": intercept,
+        "inlier_count": inlier_count,
+        "stripe_threshold": stripe_threshold,
+        "subset_shape": [sub_n_tof, sub_n_swim],
+    })) {
+        let _ = std::fs::write("/tmp/rough_binned_fit_diagnostic.json", diag);
+    }
+
     Ok((slope, intercept))
 }
 
