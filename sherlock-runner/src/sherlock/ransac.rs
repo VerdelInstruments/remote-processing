@@ -804,8 +804,9 @@ pub fn ransac(
         let display_inlier: Vec<bool> =
             display_idx.iter().map(|&i| full_inlier_mask[i]).collect();
 
-        sh.ransac_slope = Some(slope);
-        sh.ransac_intercept = Some(intercept);
+        // Store the raw rough fit (not the fallback direct fit)
+        sh.ransac_slope = Some(rough_slope);
+        sh.ransac_intercept = Some(rough_intercept);
         sh.ransac_inlier_mask = Some(full_inlier_mask);
 
         return Ok(RansacResult {
@@ -846,8 +847,11 @@ pub fn ransac(
     let display_swim: Vec<f64> = display_idx.iter().map(|&i| centroids_swim[i]).collect();
     let display_inlier: Vec<bool> = display_idx.iter().map(|&i| full_inlier_mask[i]).collect();
 
-    sh.ransac_slope = Some(slope);
-    sh.ransac_intercept = Some(intercept);
+    // Store the RAW rough fit, not the refined fit.
+    // precise_autocorrelation uses this to filter full-res peaks,
+    // matching production where the precise step sees the actual rough fit.
+    sh.ransac_slope = Some(rough_slope);
+    sh.ransac_intercept = Some(rough_intercept);
     sh.ransac_inlier_mask = Some(full_inlier_mask);
 
     Ok(RansacResult {
