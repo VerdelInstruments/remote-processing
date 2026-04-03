@@ -205,36 +205,50 @@ aws logs tail /aws/lambda/sherlock-runner \
 - Binary size: 54 MB (container image)
 - Memory limit: 10 GB. Files up to ~3.2 GB process successfully. Larger files would need ECS Fargate.
 
-## Test Results (2026-04-01)
+## Test Results (2026-04-02, latest)
 
-10 non-DSTL samples from `two-two-one-b-files-987686461587`, all 3.2 GB fourierdomain.nc files. Each compared against the production reference `peaks.db` using 1.5 Da nearest-neighbour tolerance.
+10 non-DSTL samples from `two-two-one-b-files-987686461587`, all 3.2 GB fourierdomain.nc files. Each compared against the production reference `peaks.db` using 1.5 Da nearest-neighbour tolerance. Variant: `rust-sklearn-bridge`.
 
-| Sample | Peaks | Ref | Matched | F1 | Duration | Notes |
-|--------|-------|-----|---------|-----|----------|-------|
-| jrlipids-000005 | 1200 | 1200 | 828 | 69.0% | 118s | |
-| jrlipids-000009 | 1200 | 1200 | 1170 | 97.5% | 113s | Near-perfect |
-| jrlipids-000006 | 1200 | 1200 | 1191 | 99.2% | 111s | Near-perfect |
-| jrlipids-000011 | 1200 | 1200 | 872 | 72.7% | 114s | |
-| jrlipids-000002 | 1200 | 1200 | 1195 | 99.6% | 114s | Near-perfect |
-| jr-1 | 1200 | 1200 | 396 | 33.0% | 115s | RANSAC divergence |
-| jrlipids-000003 | 1200 | 1200 | 917 | 76.4% | 114s | |
-| jrlipids-000007 | 1200 | 1200 | — | — | 114s | Ref download failed |
+| Sample | Peaks | Ref | Matched | F1 | Top50 | Top100 | Duration | Notes |
+|--------|-------|-----|---------|-----|-------|--------|----------|-------|
+| jrlipids-000005 | 1200 | 1200 | 855 | 71.2% | 50.0% | 49.0% | 217s | See known issues |
+| jrlipids-000009 | 1200 | 1200 | 1170 | 97.5% | 98.0% | 98.0% | 196s | |
+| jrlipids-000006 | 1200 | 1200 | 1191 | 99.2% | 100% | 99.0% | 198s | |
+| jrlipids-000011 | 1200 | 1200 | 1174 | 97.8% | 100% | 98.0% | 198s | |
+| jrlipids-000002 | 1200 | 1200 | 1195 | 99.6% | 100% | 100% | 198s | |
+| jr-1 | 1200 | 1200 | 401 | 33.4% | 60.0% | 55.0% | 201s | RANSAC divergence |
+| jrlipids-000003 | 1200 | 1200 | 1175 | 97.9% | 98.0% | 96.0% | 197s | |
+| jrlipids-000007 | 1200 | 1200 | 1157 | 96.4% | 94.0% | 92.0% | 197s | |
+| jrlipids-000001 | 1200 | 1200 | 401 | 33.4% | 60.0% | 55.0% | 199s | Same as jr-1 |
+| jrlipids-000004 | 1200 | 1200 | 1196 | 99.7% | 100% | 100% | 200s | |
 
-**Average F1: 78.2%** (7 samples with successful comparison)
+**Average F1: 82.6%** (10 samples). **7 of 10 samples above 96%.**
 
 ### Interpretation
 
-- **3 samples at 97-99%**: pipeline matches production closely
-- **3 samples at 69-77%**: gap is from top_n_peaks selection differences (harmonic filter produces slightly different 1,200-peak selection — see test-harness Experiment 8)
-- **1 sample at 33%**: RANSAC fit divergence on "jr-1" (different sample type, competing linear structures)
+- **7 samples at 96-99.7%**: Pipeline matches production closely. Top-50 recall 94-100%.
+- **1 sample at 71.2%** (jrlipids-000005): Moderate gap, top_n selection differences.
+- **2 samples at 33.4%** (jr-1, jrlipids-000001): RANSAC rough fit divergence causes ~9 Da systematic swim coordinate shift. See investigation notes below.
+
+### Investigation History
+
+The recall improved through a series of fixes, each validated by the test harness:
+
+| Fix | Avg F1 | Commit |
+|-----|--------|--------|
+| Initial (peaks_above_noise on 1,200 top_n) | 8.4% | — |
+| Output centroids (1,200) instead of noise-filtered | 69.5% | `9dc6af0` |
+| Store raw rough fit (not refined) for precise step | **82.6%** | `1954656` |
+
+**Root cause of remaining 33% samples**: Diagnostic comparison (Rust vs Python binning bridge, same Lambda invocation) confirmed the binning produces **identical** peaks (same 61 peaks, coordinates matching to 4 decimal places). The RANSAC fit (via sklearn bridge) is also identical. The divergence occurs because the rough fit (slope=0.804) feeds into the precise step which selects different full-res peaks than production. Tolerance sweep confirms the peaks ARE found — at 20 Da tolerance, recall reaches 99.9% on these samples. The coordinate offset is systematic (~9 Da), not random.
 
 ### Known Issues
 
-1. **RANSAC divergence on some samples**: The Lambda uses native Rust RANSAC, not the sklearn bridge. Production uses `sklearn.RANSACRegressor(random_state=42, stop_n_inliers=50)`. The `stop_n_inliers=50` parameter causes sklearn to stop early at the first acceptable fit, which can produce a different consensus than running all 1000 trials. The native Rust RANSAC doesn't implement `stop_n_inliers`. On most samples the fits converge, but on samples with competing linear structures (like "jr-1") the fits diverge significantly. See test-harness Experiments 17-18.
+1. **RANSAC rough fit divergence on 2 of 10 samples**: The rough fit on "jr-1" and "jrlipids-000001" produces slope=0.804 while production likely gets a different slope. Even with the sklearn bridge (same algorithm, same parameters, same input peaks), the fit matches our Rust binning output — so the divergence must come from a subtle difference in how production bins or thresholds differently for these specific datasets. The precise autocorrelation then amplifies the difference.
 
-2. **top_n_peaks selection overlap ~96-98%**: The harmonic filter in Rust matches production closely (Experiment 11: 98.6% overlap on sample-20) but not perfectly. 17-40 of the 1200 selected peaks differ, causing downstream coordinate differences. This accounts for the 69-77% F1 tier.
+2. **top_n_peaks selection overlap ~96-98%**: Harmonic filter matches production closely but not perfectly. 17-40 of 1200 peaks differ per sample. Accounts for the 71% sample.
 
-3. **peaks_above_noise output not used for final peaks**: The Lambda outputs the 1,200 centroided top_n peaks (matching what the 2discover compare step uses), not the peaks_above_noise filtered set. The peaks_above_noise step runs correctly on the full 14M peaks (verified in logs) but its output feeds precursors/fragments, not the final peak list.
+3. **Peak output path**: The Lambda outputs the 1,200 centroided top_n peaks with RANSAC-calibrated swim coordinates. The peaks_above_noise step runs on the full 14M peaks (confirmed in logs) but its output feeds precursors/fragments, not the final peak list.
 
 ## Code Provenance
 
@@ -243,24 +257,33 @@ The pipeline code in `sherlock-runner/src/sherlock/` was copied from `VerdelInst
 | File | Change |
 |------|--------|
 | `progress.rs` | Replaced Tauri `emit_progress(app, ...)` with log-only no-op |
-| `find_filter.rs` | Removed `app: Option<&tauri::AppHandle>` param; memory-optimised `maximum_filter_2d` (single-buffer, validated by 5 unit tests) |
+| `find_filter.rs` | Removed `app` param; memory-optimised `maximum_filter_2d` (single-buffer, validated by 5 unit tests) |
 | `compare.rs` | Removed `app` param |
 | `peaks_above_noise.rs` | Removed `app` param; reads from `full_peak_*` stash (14M peaks) instead of current peak arrays |
-| `mod.rs` | Added `full_peak_row_idx/col_idx/amplitudes` fields; removed `NativeSherlock` Tauri wrapper |
+| `mod.rs` | Added `full_peak_*` stash fields, `use_sklearn_ransac` flag; removed `NativeSherlock` Tauri wrapper |
 | `stripes.rs` | Stashes full peaks before top_n filtering |
+| `ransac.rs` | Added `use_sklearn` param threading; stores raw rough fit (not refined); dumps diagnostic JSON; updated bridge paths for Lambda |
 | `review.rs` | Takes `DatasetState` param; handles centroid/peak count mismatch |
 | `dataset.rs` | Stripped to scan + load_nc only (no UI functions, no rusqlite/csv) |
+| `main.rs` | Lambda handler with S3 streaming download, algorithm_variant routing, diagnostic dumps |
 
-All other sherlock modules (`calibrate.rs`, `centroid.rs`, `ransac.rs`, `precursors.rs`, `fragments.rs`, `isotope.rs`, `swim_group.rs`, `graph_clique.rs`, `subsample.rs`, `run.rs`, `run_compare.rs`, `export.rs`) are unmodified copies.
+All other sherlock modules (`calibrate.rs`, `centroid.rs`, `precursors.rs`, `fragments.rs`, `isotope.rs`, `swim_group.rs`, `graph_clique.rs`, `subsample.rs`, `run.rs`, `run_compare.rs`, `export.rs`) are unmodified copies from 2discover.
 
 ### What's in the Lambda vs 2discover
 
-The Lambda code includes two fixes NOT yet in 2discover:
+The Lambda code includes fixes NOT yet in 2discover:
 - **Full peak stash** (`full_peak_*` fields in SherlockState, stash in `stripes.rs`, read in `peaks_above_noise.rs`) — ensures peaks_above_noise operates on 14M peaks
 - **Memory-optimised `maximum_filter_2d`** — single-buffer approach reducing peak memory from 9.6GB to 6.4GB
+- **Raw rough fit storage** — `ransac()` stores rough_slope/rough_intercept (not refined) so precise_autocorrelation sees the correct starting point
+- **Algorithm variants** — `algorithm_variant` field routes RANSAC through native Rust or Python sklearn bridge
+- **Diagnostic dumps** — rough_binned_fit outputs diagnostic JSON to S3, Python binning bridge comparison
+
+The Lambda container includes:
+- Python 3 + numpy + scikit-learn + scipy + xarray + netCDF4
+- `/opt/ransac_bridge.py` — sklearn RANSAC bridge
+- `/opt/binning_bridge.py` — production-equivalent binning for diagnostics
 
 The Lambda code does NOT include:
-- The sklearn RANSAC bridge (no Python in the Lambda container) — falls back to native Rust RANSAC
 - Any Tauri UI integration
 - rusqlite/csv peak loading (reference peaks not needed for processing)
 
