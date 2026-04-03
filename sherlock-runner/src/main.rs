@@ -157,8 +157,6 @@ async fn download_from_s3(client: &S3Client, s3_uri: &str, local_path: &str) -> 
         .await
         .map_err(|e| format!("S3 download error: {}", e))?;
 
-    let content_length = resp.content_length().unwrap_or(0);
-
     // Stream to disk — never hold the full file in RAM
     let mut file = tokio::fs::File::create(local_path)
         .await
@@ -297,12 +295,12 @@ async fn handler(event: LambdaEvent<SherlockRequest>) -> Result<SherlockResponse
     let local_nc = "/tmp/input.nc";
     download_from_s3(&s3, &req.s3_input_path, local_nc).await?;
 
-    // Load dataset into memory, then delete the /tmp file to free disk
-    // (NetCDF reads all data into Array2<f32>, no mmap)
+    // Load dataset into memory
     let mut ds = DatasetState::default();
     dataset::scan_directory(&mut ds, local_nc)?;
     dataset::load_nc(&mut ds)?;
-    let _ = std::fs::remove_file(local_nc);
+    // Keep the .nc file on disk for optional Python diagnostic bridge.
+    // Deleted after diagnostics complete (end of handler).
 
     info!("[handler] dataset loaded: {:?}", ds.shape);
 
@@ -344,11 +342,8 @@ async fn handler(event: LambdaEvent<SherlockRequest>) -> Result<SherlockResponse
         use std::process::{Command, Stdio};
         use std::io::Write as IoWrite;
 
-        // Re-download .nc briefly for Python bridge (was deleted after load)
-        let local_nc = "/tmp/input_diag.nc";
-        if let Err(e) = download_from_s3(&s3, &req.s3_input_path, local_nc).await {
-            info!("[handler] skipping Python binning diagnostic: {}", e);
-        } else {
+        // Use the original .nc file still on disk
+        {
             let bridge_req = serde_json::json!({
                 "nc_path": local_nc,
                 "n_bins": 5000,
@@ -380,10 +375,12 @@ async fn handler(event: LambdaEvent<SherlockRequest>) -> Result<SherlockResponse
                 }
                 Err(e) => info!("[handler] Python binning bridge not available: {}", e),
             }
-
-            let _ = std::fs::remove_file(local_nc);
         }
     }
+
+    // Clean up /tmp
+    let _ = std::fs::remove_file(local_nc);
+    let _ = std::fs::remove_file("/tmp/rough_binned_fit_diagnostic.json");
 
     let duration_ms = t0.elapsed().as_millis() as u64;
     info!("[handler] complete: {} peaks, {}ms", peak_count, duration_ms);

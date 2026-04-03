@@ -22,6 +22,8 @@ Resources:
       PackageType: Image
       Architectures:
         - arm64
+      EphemeralStorage:
+        Size: 10240
       Environment:
         Variables:
           RUST_LOG: info

@@ -1,7 +1,7 @@
 # Sherlock Lambda — Rust pipeline in a container image
 # Build in standard AL2023, then copy into Lambda runtime image
 
-FROM amazonlinux:2023 AS builder
+FROM --platform=linux/arm64 amazonlinux:2023 AS builder
 
 RUN dnf install -y \
     gcc gcc-c++ make cmake git tar gzip \

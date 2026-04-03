@@ -47,11 +47,17 @@ impl RunningMedian {
 
     fn remove(&mut self, val: f32) {
         let pos = self.buf.partition_point(|&x| x < val);
-        // Find exact match (handles duplicates correctly)
-        if pos < self.buf.len() && self.buf[pos] == val {
-            self.buf.remove(pos);
-        } else if pos + 1 < self.buf.len() && self.buf[pos + 1] == val {
-            self.buf.remove(pos + 1);
+        // Scan forward from insertion point to find exact match.
+        // Handles float precision where partition_point may land
+        // before the exact value due to equal-comparing duplicates.
+        for i in pos..self.buf.len() {
+            if self.buf[i] == val {
+                self.buf.remove(i);
+                return;
+            }
+            if self.buf[i] > val {
+                break;
+            }
         }
     }
 
