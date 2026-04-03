@@ -71,25 +71,6 @@ impl RunningMedian {
 }
 
 // ---------------------------------------------------------------------------
-// Column extraction helper — fixes cache thrashing on row-major arrays
-// ---------------------------------------------------------------------------
-
-/// Extract a single column from a row-major Array2<f32> into a contiguous Vec.
-fn extract_column(data: &Array2<f32>, col: usize) -> Vec<f32> {
-    let n_rows = data.nrows();
-    let mut out = Vec::with_capacity(n_rows);
-    // Use raw slice + stride for best possible performance
-    let raw = data.as_slice().unwrap();
-    let n_cols = data.ncols();
-    let mut idx = col;
-    for _ in 0..n_rows {
-        out.push(raw[idx]);
-        idx += n_cols;
-    }
-    out
-}
-
-// ---------------------------------------------------------------------------
 // Rolling median — column-wise, dual-heap, parallelized
 // ---------------------------------------------------------------------------
 

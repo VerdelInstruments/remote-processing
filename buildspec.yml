@@ -2,19 +2,22 @@ version: 0.2
 
 env:
   variables:
-    ECR_REPO: 987686461587.dkr.ecr.eu-west-2.amazonaws.com/sherlock-runner
+    AWS_DEFAULT_REGION: eu-west-2
+    IMAGE_REPO_NAME: sherlock-runner
 
 phases:
   pre_build:
     commands:
       - echo Logging in to ECR...
-      - aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin 987686461587.dkr.ecr.eu-west-2.amazonaws.com
+      - ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+      - ECR_REPO="${ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${IMAGE_REPO_NAME}"
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com
   build:
     commands:
       - echo Building Docker image...
       - cd sherlock-runner
-      - docker build --platform linux/arm64 -t sherlock-runner .
-      - docker tag sherlock-runner:latest $ECR_REPO:latest
+      - docker build --platform linux/arm64 -t $IMAGE_REPO_NAME .
+      - docker tag $IMAGE_REPO_NAME:latest $ECR_REPO:latest
   post_build:
     commands:
       - echo Pushing to ECR...

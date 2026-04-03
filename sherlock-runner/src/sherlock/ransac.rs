@@ -922,7 +922,7 @@ pub fn precise_autocorrelation(
     ds: &DatasetState,
     sh: &mut SherlockState,
     tolerance: f64,
-    _n_peaks: usize,
+    n_peaks: usize,
     _half_window_tof: usize,
     _half_window_swim: usize,
 ) -> Result<PreciseAutocorrelationResult, String> {
@@ -976,7 +976,7 @@ pub fn precise_autocorrelation(
 
     let peaks_near_line = near_line_indices.len();
     // Production hardcodes n_peaks=15 for precise fit (autocorrelation.py step 8)
-    let top_n = near_line_indices.len().min(15);
+    let top_n = near_line_indices.len().min(n_peaks);
     let top_indices: Vec<usize> = near_line_indices[..top_n].to_vec();
 
     info!(

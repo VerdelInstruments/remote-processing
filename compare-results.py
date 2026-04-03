@@ -62,6 +62,8 @@ def compare_peaks(ref_peaks: list[dict], our_peaks: list[dict], tolerance: float
 
         for j in range(lo, hi):
             oi = our_sorted[j]
+            if matched_our[oi]:
+                continue  # Enforce 1:1 matching
             dt = rt - our_peaks[oi]["tof_mass"]
             ds = rs - our_peaks[oi]["swim_mass"]
             dist = math.sqrt(dt * dt + ds * ds)
